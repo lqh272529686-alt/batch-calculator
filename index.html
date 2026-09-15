@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>批次计算器</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
         body { background-color: #f5f5f7; padding: 16px; color: #1d1d1f; }
         .card { background: #ffffff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 16px; }
         h2 { font-size: 20px; text-align: center; margin-bottom: 16px; color: #111; }
@@ -13,8 +15,8 @@
         .form-group label { width: 35%; font-size: 14px; font-weight: 600; color: #333; }
         .form-group input { width: 65%; padding: 10px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; outline: none; background: #fafafa; }
         .form-group input:focus { border-color: #2b5c8f; background: #fff; }
-        .btn-calc { width: 100%; padding: 12px; background-color: #2b5c8f; color: white; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; margin-top: 8px; cursor: pointer; }
-        .btn-calc:active { background-color: #1e4066; }
+        .btn-calc { width: 100%; padding: 12px; background-color: #007aff; color: white; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; margin-top: 8px; cursor: pointer; }
+        .btn-calc:active { background-color: #0056b3; }
         .tip { font-size: 12px; color: #666; text-align: center; margin: 12px 0 8px 0; }
         .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 8px 16px; border-radius: 20px; font-size: 13px; display: none; z-index: 1000; }
         table { width: 100%; border-collapse: collapse; margin-top: 8px; text-align: center; font-size: 14px; }
@@ -34,6 +36,174 @@
             <label>下限值 (a):</label>
             <input type="number" step="any" id="input_a" placeholder="实数 a > 0">
         </div>
+        <div class="form-group">
+            <label>上限值 (b):</label>
+            <input type="number" step="any" id="input_b" placeholder="实数 b > a">
+        </div>
+        <div class="form-group">
+            <label>总批数 (x):</label>
+            <input type="number" pattern="[0-9]*" id="input_x" placeholder="整数 x > 0">
+        </div>
+        <div class="form-group">
+            <label>小数位数 (w):</label>
+            <input type="number" pattern="[0-9]*" id="input_w" placeholder="截断位数 (可留空)">
+        </div>
+        <div class="form-group">
+            <label>本金 (m):</label>
+            <input type="number" step="any" id="input_m" placeholder="本金 m (可留空)">
+        </div>
+        <button class="btn-calc" id="btn_calc">开始计算</button>
+    </div>
+
+    <div class="card">
+        <div class="tip">提示：点击绿色数值单元格可自动复制</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 25%;">批次 (i)</th>
+                    <th style="width: 37.5%;">取值 (r)</th>
+                    <th style="width: 37.5%;">买入额 (n)</th>
+                </tr>
+            </thead>
+            <tbody id="result_body">
+                <tr><td colspan="3" style="color:#999; padding: 16px;">暂无计算数据</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function showToast(msg) {
+            var toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.style.display = 'block';
+            setTimeout(function() { toast.style.display = 'none'; }, 2000);
+        }
+
+        function copyText(val, name) {
+            if (val === '-') return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(val).then(function() {
+                    showToast('已复制 ' + name + ': ' + val);
+                }).catch(function() {
+                    fallbackCopy(val, name);
+                });
+            } else {
+                fallbackCopy(val, name);
+            }
+        }
+
+        function fallbackCopy(text, name) {
+            var input = document.createElement('input');
+            input.setAttribute('value', text);
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            showToast('已复制 ' + name + ': ' + text);
+        }
+
+        function truncateDecimal(valFloat, decimals) {
+            var rawStr = valFloat.toFixed(12).replace(/0+$/, '').replace(/\.$/, '');
+            if (decimals === null || decimals === undefined) return rawStr;
+
+            if (rawStr.indexOf('.') !== -1) {
+                var parts = rawStr.split('.');
+                var integerPart = parts[0];
+                var decimalPart = parts[1];
+                if (decimals === 0) return integerPart;
+                while (decimalPart.length < decimals) {
+                    decimalPart += '0';
+                }
+                decimalPart = decimalPart.slice(0, decimals);
+                return integerPart + '.' + decimalPart;
+            } else {
+                if (decimals === 0) return rawStr;
+                var zeros = '';
+                for (var k = 0; k < decimals; k++) zeros += '0';
+                return rawStr + '.' + zeros;
+            }
+        }
+
+        document.getElementById('btn_calc').addEventListener('click', function() {
+            var aStr = document.getElementById('input_a').value.trim();
+            var bStr = document.getElementById('input_b').value.trim();
+            var xStr = document.getElementById('input_x').value.trim();
+            var wStr = document.getElementById('input_w').value.trim();
+            var mStr = document.getElementById('input_m').value.trim();
+
+            var a = parseFloat(aStr);
+            var b = parseFloat(bStr);
+            var x = parseInt(xStr, 10);
+
+            if (isNaN(a) || isNaN(b) || isNaN(x)) {
+                alert('请正确填写 a, b, x！');
+                return;
+            }
+            if (a <= 0 || b <= a || x <= 0) {
+                alert('输入需满足：a > 0, b > a, x > 0');
+                return;
+            }
+
+            var wVal = null;
+            if (wStr !== "") {
+                wVal = parseInt(wStr, 10);
+                if (isNaN(wVal) || wVal < 0) {
+                    alert('小数位数 w 必须 >= 0');
+                    return;
+                }
+            }
+
+            var mVal = null;
+            if (mStr !== "") {
+                mVal = parseFloat(mStr);
+                if (isNaN(mVal) || mVal <= 0) {
+                    alert('本金 m 必须 > 0');
+                    return;
+                }
+            }
+
+            var nVal = mVal !== null ? (mVal / x) : null;
+            var tbody = document.getElementById('result_body');
+            tbody.innerHTML = '';
+
+            for (var i = 0; i < x; i++) {
+                var rVal = (x === 1) ? a : a + ((b - a) / (x - 1)) * i;
+                var rStr = truncateDecimal(rVal, wVal);
+                var nStr = nVal !== null ? nVal.toFixed(10).replace(/0+$/, '').replace(/\.$/, '') : "-";
+
+                var tr = document.createElement('tr');
+
+                var tdI = document.createElement('td');
+                tdI.innerText = i;
+                tr.appendChild(tdI);
+
+                var tdR = document.createElement('td');
+                tdR.innerHTML = '<span class="copyable" data-val="' + rStr + '" data-name="r">' + rStr + '</span>';
+                tr.appendChild(tdR);
+
+                var tdN = document.createElement('td');
+                if (nStr !== "-") {
+                    tdN.innerHTML = '<span class="copyable" data-val="' + nStr + '" data-name="n">' + nStr + '</span>';
+                } else {
+                    tdN.innerText = "-";
+                }
+                tr.appendChild(tdN);
+
+                tbody.appendChild(tr);
+            }
+        });
+
+        document.getElementById('result_body').addEventListener('click', function(e) {
+            var target = e.target;
+            if (target && target.classList.contains('copyable')) {
+                var val = target.getAttribute('data-val');
+                var name = target.getAttribute('data-name');
+                copyText(val, name);
+            }
+        });
+    </script>
+</body>
+</html>
         <div class="form-group">
             <label>上限值 (b):</label>
             <input type="number" step="any" id="input_b" placeholder="实数 b > a">
